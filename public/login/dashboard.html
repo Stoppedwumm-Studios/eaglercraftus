@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard</title>
+</head>
+<body>
+
+    <!-- This content is hidden until we confirm the user is logged in -->
+    <div id="app-content" style="display:none;">
+        <h1>Welcome to your Dashboard!</h1>
+        <p>Your User ID is: <b id="user-id"></b></p>
+        <button id="sign-out-button">Sign Out</button>
+    </div>
+
+    <p id="loading-message">Checking authentication status...</p>
+
+    <!-- We only need the core Firebase SDKs here, not the UI library -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyCJkNBHsYzOuymw2vP_HdvKuNdUsRIb4t4",
+            authDomain: "in-space-wm.firebaseapp.com",
+            projectId: "in-space-wm",
+            storageBucket: "in-space-wm.firebasestorage.app",
+            messagingSenderId: "38093154042",
+            appId: "1:38093154042:web:44c7c33d159efd11704b43",
+            measurementId: "G-WXSMK0TP1S"
+        };
+
+        const app = firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+
+        // The "Auth Guard"
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                // User is signed in. Show the page content.
+                console.log("User is authenticated. Displaying content.");
+                document.getElementById('loading-message').style.display = 'none';
+                document.getElementById('app-content').style.display = 'block';
+                document.getElementById('user-id').textContent = user.uid;
+            } else {
+                // User is not signed in. Redirect to the login page.
+                console.log("User is not authenticated. Redirecting to login page...");
+                window.location.href = 'login.html';
+            }
+        });
+
+        // Sign out logic
+        document.getElementById('sign-out-button').addEventListener('click', () => {
+            auth.signOut(); // onAuthStateChanged will automatically handle the redirect
+        });
+    </script>
+</body>
+</html>

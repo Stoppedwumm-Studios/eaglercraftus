@@ -1,0 +1,1 @@
+async function sync() {while (true) {console.log('test');await new Promise((res, rej) => {setTimeout(resolve, 3000)})}};main();

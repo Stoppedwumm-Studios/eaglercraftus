@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+</head>
+<body>
+    <h1>Loading...</h1>
+</body>
+<script type="module">
+document.addEventListener("DOMContentLoaded", async () => {
+    const url = "https://stoppedwummpython.github.io/eageag/eaglercraft_wasm_client/";
+    let content;
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Response not OK: ${response.statusText}`);
+        content = await response.text();
+    } catch (error) {
+        console.error("Failed to fetch client:", error);
+        document.body.innerHTML = `<h1>Error loading content: ${error.message}</h1>`;
+        return;
+    }
+
+    // Write the base HTML first
+    document.open();
+    document.write(content);
+    document.close();
+
+    // Then dynamically add Firebase scripts
+    const firebaseScripts = [
+        "https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js",
+        "https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js",
+        "https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"
+    ];
+
+    for (const src of firebaseScripts) {
+        const s = document.createElement("script");
+        s.src = src;
+        document.head.appendChild(s);
+        await new Promise(res => s.onload = res);
+    }
+
+    // Finally, inject your sync logic as an inline script
+    const syncScript = document.createElement("script");
+    syncScript.textContent = `
+        const firebaseConfig = {
+            apiKey: "AIzaSyCJkNBHsYzOuymw2vP_HdvKuNdUsRIb4t4",
+            authDomain: "in-space-wm.firebaseapp.com",
+            projectId: "in-space-wm",
+            storageBucket: "in-space-wm.firebasestorage.app",
+            messagingSenderId: "38093154042",
+            appId: "1:38093154042:web:44c7c33d159efd11704b43",
+            measurementId: "G-WXSMK0TP1S"
+        };
+        const app = firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        auth.onAuthStateChanged(async (user) => {
+            if (user) {
+                console.log('User logged in:', user.uid);
+                const userDocRef = db.collection('users').doc(user.uid);
+                try {
+                    const doc = await userDocRef.get();
+                    if (doc.exists && doc.data().localStorageData) {
+                        console.log('Populating localStorage from Firestore...');
+                        const firestoreData = doc.data().localStorageData;
+                        for (const key in firestoreData) {
+                            localStorage.setItem(key, firestoreData[key]);
+                        }
+                    }
+                } catch (e) { console.error("Error loading data:", e); }
+                syncLoop(userDocRef);
+            } else {
+                console.log('No user logged in. Skipping sync.');
+            }
+        });
+
+        async function syncLoop(userDocRef) {
+            while (true) {
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                try {
+                    await userDocRef.set({ localStorageData: { ...localStorage } }, { merge: true });
+                    console.log('Synced localStorage to Firestore.');
+                } catch (e) { console.error('Sync error:', e); }
+            }
+        }
+    `;
+    document.head.appendChild(syncScript);
+});
+</script>
+</html>
