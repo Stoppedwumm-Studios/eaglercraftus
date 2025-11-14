@@ -3,44 +3,47 @@
 <head>
 </head>
 <body>
-    <h1>Loading...</h1>
+    <h1>Loading…</h1>
 </body>
+
 <script type="module">
 document.addEventListener("DOMContentLoaded", async () => {
+
+    /* ===========================================================
+       1. Fetch remote HTML
+    ============================================================ */
+
     const url = "https://stoppedwummpython.github.io/eageag/eaglercraft_wasm_client/";
-    let content;
+    let remoteHtml = "";
+
     try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Response not OK: ${response.statusText}`);
-        content = await response.text();
-    } catch (error) {
-        console.error("Failed to fetch client:", error);
-        document.body.innerHTML = `<h1>Error loading content: ${error.message}</h1>`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        remoteHtml = await res.text();
+    } catch (err) {
+        document.body.innerHTML = `<h1>Error loading page: ${err.message}</h1>`;
         return;
     }
 
-    // Write the base HTML first
-    document.open();
-    document.write(content);
-    document.close();
+    /* ===========================================================
+       2. Firebase SDK tags
+    ============================================================ */
 
-    // Then dynamically add Firebase scripts
-    const firebaseScripts = [
-        "https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js",
-        "https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js",
-        "https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"
-    ];
+    const firebaseSdkScripts = `
+        <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"><\/script>
+        <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"><\/script>
+        <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"><\/script>
+    `;
 
-    for (const src of firebaseScripts) {
-        const s = document.createElement("script");
-        s.src = src;
-        document.head.appendChild(s);
-        await new Promise(res => s.onload = res);
-    }
+    /* ===========================================================
+       3. Synchronization script (safe module)
+    ============================================================ */
 
-    // Finally, inject your sync logic as an inline script
-    const syncScript = document.createElement("script");
-    syncScript.textContent = `
+    const syncScript = `
+        import * as fflate from "https://cdn.jsdelivr.net/npm/fflate@0.8.2/esm/browser.js";
+
+        const MAX_CHUNK_SIZE = 1024 * 1024;
+
         const firebaseConfig = {
             apiKey: "AIzaSyCJkNBHsYzOuymw2vP_HdvKuNdUsRIb4t4",
             authDomain: "in-space-wm.firebaseapp.com",
@@ -50,41 +53,165 @@ document.addEventListener("DOMContentLoaded", async () => {
             appId: "1:38093154042:web:44c7c33d159efd11704b43",
             measurementId: "G-WXSMK0TP1S"
         };
+
         const app = firebase.initializeApp(firebaseConfig);
         const auth = firebase.auth();
-        const db = firebase.firestore();
+        const db   = firebase.firestore();
 
-        auth.onAuthStateChanged(async (user) => {
-            if (user) {
-                console.log('User logged in:', user.uid);
-                const userDocRef = db.collection('users').doc(user.uid);
-                try {
-                    const doc = await userDocRef.get();
-                    if (doc.exists && doc.data().localStorageData) {
-                        console.log('Populating localStorage from Firestore...');
-                        const firestoreData = doc.data().localStorageData;
-                        for (const key in firestoreData) {
-                            localStorage.setItem(key, firestoreData[key]);
+        /* ========== IndexedDB Dump ========== */
+        async function dumpIndexedDB() {
+            const out = {};
+            const list = await indexedDB.databases();
+            for (const meta of list) {
+                const name = meta.name;
+                const openReq = indexedDB.open(name);
+                await new Promise(res => openReq.onsuccess = res);
+                const dbi = openReq.result;
+                const tx = dbi.transaction(dbi.objectStoreNames, "readonly");
+                const stores = {};
+                for (const s of dbi.objectStoreNames) {
+                    const store = tx.objectStore(s);
+                    stores[s] = await new Promise(r => {
+                        const req = store.getAll();
+                        req.onsuccess = () => r(req.result);
+                    });
+                }
+                out[name] = stores;
+            }
+            return out;
+        }
+
+        /* ========== IndexedDB Restore ========== */
+        async function restoreIndexedDB(data) {
+            for (const dbName in data) {
+                const meta = data[dbName];
+                const openReq = indexedDB.open(dbName);
+                openReq.onupgradeneeded = e => {
+                    const dbi = e.target.result;
+                    for (const storeName in meta) {
+                        if (!dbi.objectStoreNames.contains(storeName)) {
+                            dbi.createObjectStore(storeName, { autoIncrement: true });
                         }
                     }
-                } catch (e) { console.error("Error loading data:", e); }
-                syncLoop(userDocRef);
-            } else {
-                console.log('No user logged in. Skipping sync.');
-            }
-        });
-
-        async function syncLoop(userDocRef) {
-            while (true) {
-                await new Promise(resolve => setTimeout(resolve, 5000));
-                try {
-                    await userDocRef.set({ localStorageData: { ...localStorage } }, { merge: true });
-                    console.log('Synced localStorage to Firestore.');
-                } catch (e) { console.error('Sync error:', e); }
+                };
+                await new Promise(res => openReq.onsuccess = res);
+                const dbi = openReq.result;
+                const tx = dbi.transaction(dbi.objectStoreNames, "readwrite");
+                for (const storeName in meta) {
+                    const store = tx.objectStore(storeName);
+                    for (const item of meta[storeName]) store.add(item);
+                }
             }
         }
+
+        /* ========== Compression helpers ========== */
+        function compressChunks(obj) {
+            const bytes = fflate.strToU8(JSON.stringify(obj));
+            const gz = fflate.gzipSync(bytes);
+            const out = [];
+            let i = 0;
+            while (i < gz.length) {
+                out.push(btoa(String.fromCharCode(...gz.slice(i, i + MAX_CHUNK_SIZE))));
+                i += MAX_CHUNK_SIZE;
+            }
+            return out;
+        }
+
+        function decompressChunks(chunks) {
+            if (!chunks) return {};
+            let bin = "";
+            for (const c of chunks) bin += atob(c);
+            const u8 = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+            return JSON.parse(fflate.strFromU8(fflate.gunzipSync(u8)));
+        }
+
+        /* ========== Auth + Sync ========== */
+        auth.onAuthStateChanged(async user => {
+            if (!user) return;
+            const userDoc = db.collection("users").doc(user.uid);
+            const snapshot = await userDoc.get();
+
+            if (snapshot.exists) {
+                const data = snapshot.data();
+                if (data.localStorageChunks) {
+                    Object.assign(localStorage, decompressChunks(data.localStorageChunks));
+                }
+                if (data.indexedDBChunks) {
+                    await restoreIndexedDB(decompressChunks(data.indexedDBChunks));
+                }
+            }
+
+            while (true) {
+                await new Promise(r => setTimeout(r, 5000));
+                await userDoc.set({
+                    localStorageChunks: compressChunks({ ...localStorage }),
+                    indexedDBChunks: compressChunks(await dumpIndexedDB())
+                }, { merge: true });
+            }
+        });
     `;
-    document.head.appendChild(syncScript);
+    
+    /* ===========================================================
+       4. Safely inject scripts INTO the HTML STRING
+    ============================================================ */
+    
+    const syncModuleScript = `<script type="module">${syncScript}<\/script>`;
+
+    remoteHtml = remoteHtml.replace(
+        "</head>",
+        firebaseSdkScripts + syncModuleScript + "</head>"
+    );
+    
+    /* ===========================================================
+       4.5. Fix the 'window.load' event listener issue
+    ============================================================ */
+
+    remoteHtml = remoteHtml.replace(
+      'window.addEventListener("load", function() {',
+      'const eaglerMain = function() {'
+    );
+    remoteHtml = remoteHtml.replace(
+      '});',
+      '}; if (document.readyState === "complete") { eaglerMain(); } else { window.addEventListener("load", eaglerMain); }'
+    );
+
+    /* ===========================================================
+       5. Replace document and re-execute scripts sequentially
+    ============================================================ */
+
+    const doc = new DOMParser().parseFromString(remoteHtml, "text/html");
+    
+    document.replaceChild(
+        document.importNode(doc.documentElement, true),
+        document.documentElement
+    );
+
+    const runScript = (oldScript) => {
+        return new Promise((resolve, reject) => {
+            const newScript = document.createElement("script");
+            Array.from(oldScript.attributes).forEach(attr => newScript.setAttribute(attr.name, attr.value));
+            newScript.appendChild(document.createTextNode(oldScript.innerHTML));
+            
+            newScript.onload = resolve;
+            newScript.onerror = reject;
+            
+            oldScript.parentNode.replaceChild(newScript, oldScript);
+            
+            if (!newScript.src) resolve();
+        });
+    };
+    
+    const scriptsToRun = Array.from(document.querySelectorAll("script"));
+
+    for (const script of scriptsToRun) {
+        try {
+            await runScript(script);
+        } catch (error) {
+            console.error("Error executing script:", error);
+            break;
+        }
+    }
 });
 </script>
 </html>
